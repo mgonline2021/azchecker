@@ -217,3 +217,4 @@ if uploaded_file is not None:
         st.error(f"Errore nel processare il file: {e}")
 else:
     st.info("Attendi il caricamento del file Excel per generare il report.")
+    
