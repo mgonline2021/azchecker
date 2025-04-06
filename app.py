@@ -16,9 +16,9 @@ st.write("Carica un file Excel contenente i dati per generare il report.")
 @st.cache_data(show_spinner=False)
 def get_product_weight_from_url(asin):
     """
-    Effettua lo scraping della pagina Amazon per estrarre il peso del prodotto.
-    Prova due strategie:
-      1. Cerca nelle tabelle con ID noti.
+    Effettua il web scraping della pagina Amazon per estrarre il peso del prodotto.
+    Prova diverse strategie:
+      1. Cerca in tabelle con ID noti scansionando tutte le righe.
       2. Fallback: cerca nella sezione detailBullets_feature_div.
     Viene aggiunto un delay casuale per ridurre il rischio di blocchi.
     """
@@ -27,7 +27,7 @@ def get_product_weight_from_url(asin):
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
                        "Chrome/90.0.4430.93 Safari/537.36"),
-                "Accept-Language": "it-IT,it;q=0.9",
+        "Accept-Language": "it-IT,it;q=0.9",
         "Referer": "https://www.amazon.it/"
     }
     try:
@@ -35,10 +35,10 @@ def get_product_weight_from_url(asin):
         time.sleep(random.uniform(1, 2))  # Delay per evitare blocchi
         if response.status_code != 200:
             return None
-
+        
         soup = BeautifulSoup(response.content, "html.parser")
         
-        # Strategia 1: Cerca nelle tabelle con ID noti
+        # Lista di possibili ID per le tabelle contenenti le specifiche
         table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
         for tid in table_ids:
             table = soup.find("table", id=tid)
@@ -56,7 +56,7 @@ def get_product_weight_from_url(asin):
                                     return float(peso_str)
                                 except ValueError:
                                     continue
-        # Strategia 2: Fallback nella sezione detailBullets_feature_div
+        # Fallback: cerca nella sezione detailBullets_feature_div
         detail_div = soup.find("div", id="detailBullets_feature_div")
         if detail_div:
             bullets = detail_div.find_all("span", class_="a-list-item")
@@ -82,6 +82,7 @@ if uploaded_file is not None:
     try:
         # Legge il file Excel (modifica il nome del foglio se necessario)
         df = pd.read_excel(uploaded_file, sheet_name="Sheet1")
+        
         st.subheader("Anteprima dei dati")
         st.dataframe(df.head())
 
@@ -100,7 +101,10 @@ if uploaded_file is not None:
             df['Valore'] = df['Cena regularna brutto'] * df['PCS']
 
             # Raggruppa per categoria e calcola totali e prezzo medio
-            grouped = df.groupby('Kategoria').agg({'PCS': 'sum', 'Valore': 'sum'}).reset_index()
+            grouped = df.groupby('Kategoria').agg({
+                'PCS': 'sum',
+                'Valore': 'sum'
+            }).reset_index()
             grouped['PrezzoMedio'] = grouped['Valore'] / grouped['PCS']
 
             # Calcola i totali globali
@@ -112,26 +116,30 @@ if uploaded_file is not None:
             st.write(f"**Totale Pezzi:** {total_pcs}")
             st.write(f"**Valore Retail Totale:** {total_value:.2f} EUR")
             st.write(f"**Prezzo Medio:** {avg_price:.2f} EUR")
+
             st.subheader("Riepilogo per Categoria")
             st.dataframe(grouped)
 
-            # Recupero dei pesi dalla colonna 'Kod 2'
+            # Se la colonna 'Kod 2' (ASIN) è presente, tenta di ottenere il peso
             if 'Kod 2' in df.columns:
                 st.subheader("Informazioni sul Peso dei Prodotti")
                 weight_results = []
                 n = len(df)
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
+                
                 with st.spinner("Recupero dei pesi in corso..."):
                     for i, asin in enumerate(df['Kod 2']):
                         peso = get_product_weight_from_url(asin)
                         weight_results.append(peso)
                         progress_bar.progress((i + 1) / n)
                         progress_text.text(f"Elaborati {i + 1} di {n} prodotti")
-                progress_text.empty()
+                
+                progress_text.empty()  # Rimuove il messaggio di avanzamento
                 df['Peso'] = weight_results
                 st.dataframe(df[['Kod 2', 'Peso']].head(10))
                 
+                # Calcola statistiche sul peso (escludendo valori nulli)
                 peso_validi = pd.to_numeric(df['Peso'], errors='coerce').dropna()
                 if not peso_validi.empty:
                     peso_totale = peso_validi.sum()
@@ -146,6 +154,8 @@ if uploaded_file is not None:
             # Grafici affiancati
             st.subheader("Grafici Affiancati")
             col1, col2 = st.columns(2)
+            
+            # ----- GRAFICO 1: Valore per Categoria -----
             with col1:
                 st.markdown("**Ripartizione Valore per Categoria**")
                 grouped_sorted_value = grouped.sort_values(by='Valore', ascending=False)
@@ -172,6 +182,8 @@ if uploaded_file is not None:
                     bbox_to_anchor=(1, 0, 0.5, 1)
                 )
                 st.pyplot(fig1)
+
+            # ----- GRAFICO 2: Quantità per Categoria -----
             with col2:
                 st.markdown("**Ripartizione Quantità per Categoria**")
                 grouped_sorted_qty = grouped.sort_values(by='PCS', ascending=False)
@@ -198,6 +210,7 @@ if uploaded_file is not None:
                     bbox_to_anchor=(1, 0, 0.5, 1)
                 )
                 st.pyplot(fig2)
+
     except Exception as e:
         st.error(f"Errore nel processare il file: {e}")
 else:
