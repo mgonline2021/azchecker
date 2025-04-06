@@ -28,7 +28,7 @@ def get_product_weight_from_url(asin):
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
                        "Chrome/90.0.4430.93 Safari/537.36"),
         "Accept-Language": "it-IT,it;q=0.9",
-        "Referer": "https://wwww.amazon.it/"
+        "Referer": "https://www.amazon.it/"
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
