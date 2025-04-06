@@ -8,196 +8,150 @@ import random
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Imposta il layout wide per utilizzare tutta la larghezza dello schermo
+# Imposta il layout "wide" per utilizzare tutta la larghezza dello schermo
 st.set_page_config(page_title="Report Automatico", layout="wide")
-
 st.title("Report Automatico da File Excel")
 st.write("Carica un file Excel contenente i dati per generare il report.")
 
-def extract_weight_from_soup(soup, domain):
+def extract_weight_from_soup(soup):
     """
-    Estrae il peso dal contenuto HTML (BeautifulSoup) cercando:
-      1. All'interno di tabelle con ID noti.
-      2. Nella sezione detailBullets_feature_div.
-      3. Come fallback, nel testo intero della pagina.
-    Supporta sia 'kg' che 'Kilogramm'.
-    Se il dominio è amazon.de, prova anche un selettore esplicito.
+    Estrae il peso dal contenuto HTML (BeautifulSoup) cercando in:
+      1. Una tabella con id "productDetails_techSpec_section_1"
+      2. In fallback, nella sezione "detailBullets_feature_div"
+    
+    Se il testo contiene un punto e virgola, si assume che il peso sia nella parte
+    dopo il punto e virgola (ad es. "59 x 52 x 4.4 cm; 8.86 kg").
+    Supporta sia "kg" che "kilogramm".
     """
-    # Strategia 1: Cerca nelle tabelle con ID noti
-    table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
-    for tid in table_ids:
-        table = soup.find("table", id=tid)
-        if table:
-            rows = table.find_all("tr")
-            for row in rows:
-                cells = row.find_all("td")
-                for cell in cells:
-                    text = cell.get_text(separator=" ", strip=True)
-                    if "kg" in text.lower() or "kilogramm" in text.lower():
-                        # Se il testo contiene un punto e virgola, prendi la parte dopo
-                        if ";" in text:
-                            candidate = text.split(";")[-1].strip()
-                        else:
-                            candidate = text
-                        match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", candidate, re.IGNORECASE)
-                        if match:
-                            peso_str = match.group(1).replace(",", ".")
-                            try:
-                                return float(peso_str)
-                            except ValueError:
-                                continue
-    # Strategia 2: Cerca nella sezione detailBullets_feature_div
-    detail_div = soup.find("div", id="detailBullets_feature_div")
-    if detail_div:
-        bullets = detail_div.find_all("span", class_="a-list-item")
-        for bullet in bullets:
-            text = bullet.get_text(separator=" ", strip=True)
-            if "kg" in text.lower() or "kilogramm" in text.lower():
-                match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", text, re.IGNORECASE)
+    # Strategia 1: Cerca nella tabella "productDetails_techSpec_section_1"
+    table = soup.find("table", id="productDetails_techSpec_section_1")
+    if table:
+        rows = table.find_all("tr")
+        for row in rows:
+            cell = row.find("td")
+            if cell:
+                text = cell.get_text(separator=" ", strip=True)
+                if ";" in text:
+                    candidate = text.split(";")[-1].strip()
+                else:
+                    candidate = text
+                match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", candidate, re.IGNORECASE)
                 if match:
                     peso_str = match.group(1).replace(",", ".")
                     try:
                         return float(peso_str)
                     except ValueError:
                         continue
-    # Strategia 3: Se il dominio è amazon.de, usa un selettore esplicito
-    if domain == "amazon.de":
-        td = soup.select_one("#productDetails_techSpec_section_1 > tbody > tr:nth-child(4) > td")
-        if td:
-            text = td.get_text(separator=" ", strip=True)
-            if "kg" in text.lower() or "kilogramm" in text.lower():
-                match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", text, re.IGNORECASE)
-                if match:
-                    peso_str = match.group(1).replace(",", ".")
-                    try:
-                        return float(peso_str)
-                    except ValueError:
-                        pass
-    # Strategia 4 (fallback generale): Scansiona l'intero testo della pagina
-    page_text = soup.get_text(separator=" ", strip=True)
-    matches = re.findall(r"([\d,.]+)\s*(kg|kilogramm)", page_text, re.IGNORECASE)
-    if matches:
-        # Ritorna il primo match (potrebbe non essere il dato corretto)
-        peso_str, _ = matches[0]
-        peso_str = peso_str.replace(",", ".")
-        try:
-            return float(peso_str)
-        except ValueError:
-            pass
+    # Strategia 2: Fallback nella sezione "detailBullets_feature_div"
+    detail_div = soup.find("div", id="detailBullets_feature_div")
+    if detail_div:
+        items = detail_div.find_all("span", class_="a-list-item")
+        for item in items:
+            text = item.get_text(separator=" ", strip=True)
+            if ";" in text:
+                candidate = text.split(";")[-1].strip()
+            else:
+                candidate = text
+            match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", candidate, re.IGNORECASE)
+            if match:
+                peso_str = match.group(1).replace(",", ".")
+                try:
+                    return float(peso_str)
+                except ValueError:
+                    continue
     return None
 
 @st.cache_data(show_spinner=False)
 def get_product_weight_from_url(asin):
     """
-    Recupera il peso del prodotto provando prima il dominio amazon.it e, se necessario, amazon.de.
+    Recupera il peso del prodotto dalla pagina di amazon.it usando il selettore definito.
     Viene aggiunto un delay casuale per ridurre il rischio di blocchi.
     """
-    domains = [
-        ("amazon.it", "it-IT,it;q=0.9", "https://www.amazon.it/"),
-        ("amazon.de", "de-DE,de;q=0.9", "https://www.amazon.de/")
-    ]
-    for domain, accept_language, referer in domains:
-        url = f"https://{domain}/dp/{asin}"
-        headers = {
-            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                           "AppleWebKit/537.36 (KHTML, like Gecko) "
-                           "Chrome/90.0.4430.93 Safari/537.36"),
-            "Accept-Language": accept_language,
-            "Referer": referer
-        }
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            time.sleep(random.uniform(1, 2))  # Delay per evitare blocchi
-            if response.status_code != 200:
-                continue
-            soup = BeautifulSoup(response.content, "html.parser")
-            peso = extract_weight_from_soup(soup, domain)
-            if peso is not None:
-                return peso
-        except Exception as e:
-            print(f"Errore per ASIN {asin} su {domain}: {e}")
-            continue
-    return None
+    url = f"https://www.amazon.it/dp/{asin}"
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/90.0.4430.93 Safari/537.36"),
+        "Accept-Language": "it-IT,it;q=0.9",
+        "Referer": "https://www.amazon.it/"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        time.sleep(random.uniform(1, 2))  # Delay per evitare blocchi
+        if response.status_code != 200:
+            return None
+        soup = BeautifulSoup(response.content, "html.parser")
+        peso = extract_weight_from_soup(soup)
+        return peso
+    except Exception as e:
+        print(f"Errore per ASIN {asin}: {e}")
+        return None
+
+@st.cache_data(show_spinner=False)
+def get_product_weight(asin):
+    # Usa solo amazon.it, poiché in precedenza ha funzionato bene
+    return get_product_weight_from_url(asin)
 
 # Carica il file Excel tramite l'interfaccia web
 uploaded_file = st.file_uploader("Carica il file Excel", type=["xlsx"])
-
 if uploaded_file is not None:
     try:
-        # Legge il file Excel (modifica il nome del foglio se necessario)
         df = pd.read_excel(uploaded_file, sheet_name="Sheet1")
-        
         st.subheader("Anteprima dei dati")
         st.dataframe(df.head())
-
-        # Verifica che le colonne richieste siano presenti
+        
+        # Verifica la presenza delle colonne richieste
         required_columns = ['Kategoria', 'PCS', 'Cena regularna brutto']
         missing_cols = [col for col in required_columns if col not in df.columns]
         if missing_cols:
-            st.error(f"Le seguenti colonne sono mancanti nel file: {', '.join(missing_cols)}")
+            st.error(f"Le seguenti colonne sono mancanti: {', '.join(missing_cols)}")
         else:
-            # Converte le colonne in formato numerico e rimuove eventuali righe con dati mancanti
             df['PCS'] = pd.to_numeric(df['PCS'], errors='coerce')
             df['Cena regularna brutto'] = pd.to_numeric(df['Cena regularna brutto'], errors='coerce')
             df = df.dropna(subset=required_columns)
-
-            # Calcola il valore totale per ogni prodotto
             df['Valore'] = df['Cena regularna brutto'] * df['PCS']
-
-            # Raggruppa per categoria e calcola totali e prezzo medio
-            grouped = df.groupby('Kategoria').agg({
-                'PCS': 'sum',
-                'Valore': 'sum'
-            }).reset_index()
+            
+            grouped = df.groupby('Kategoria').agg({'PCS': 'sum', 'Valore': 'sum'}).reset_index()
             grouped['PrezzoMedio'] = grouped['Valore'] / grouped['PCS']
-
-            # Calcola i totali globali
+            
             total_pcs = grouped['PCS'].sum()
             total_value = grouped['Valore'].sum()
             avg_price = total_value / total_pcs if total_pcs != 0 else 0
-
+            
             st.subheader("Riepilogo Globale")
             st.write(f"**Totale Pezzi:** {total_pcs}")
             st.write(f"**Valore Retail Totale:** {total_value:.2f} EUR")
             st.write(f"**Prezzo Medio:** {avg_price:.2f} EUR")
-
             st.subheader("Riepilogo per Categoria")
             st.dataframe(grouped)
-
-            # Elaborazione parallela per il recupero dei pesi
+            
+            # Recupero parallelo dei pesi per la colonna 'Kod 2'
             if 'Kod 2' in df.columns:
                 st.subheader("Informazioni sul Peso dei Prodotti")
                 n = len(df)
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
-                
                 weight_results = {}
                 with st.spinner("Recupero dei pesi in corso..."):
                     with ThreadPoolExecutor(max_workers=5) as executor:
                         futures = {}
-                        # Itera sulla Serie degli ASIN usando .items()
                         for idx, asin in df['Kod 2'].items():
-                            futures[executor.submit(get_product_weight_from_url, asin)] = idx
-                        
+                            futures[executor.submit(get_product_weight, asin)] = idx
                         completed_count = 0
                         for future in as_completed(futures):
                             idx = futures[future]
                             try:
                                 weight = future.result()
-                            except Exception as e:
+                            except Exception:
                                 weight = None
                             weight_results[idx] = weight
                             completed_count += 1
                             progress_bar.progress(completed_count / n)
                             progress_text.text(f"Elaborati {completed_count} di {n} prodotti")
-                
-                progress_text.empty()  # Rimuove il messaggio di avanzamento
-                
-                # Assegna i risultati secondo l'ordine originale
+                progress_text.empty()
                 df['Peso'] = [weight_results[i] for i in sorted(weight_results.keys())]
                 st.dataframe(df[['Kod 2', 'Peso']])
                 
-                # Calcola statistiche sul peso (escludendo valori nulli)
                 peso_validi = pd.to_numeric(df['Peso'], errors='coerce').dropna()
                 if not peso_validi.empty:
                     peso_totale = peso_validi.sum()
@@ -208,12 +162,10 @@ if uploaded_file is not None:
                     st.warning("Non sono stati trovati dati di peso validi per i prodotti.")
             else:
                 st.warning("La colonna 'Kod 2' (ASIN) non è presente nel file.")
-
-            # Grafici affiancati
+            
+            # Grafici (codice invariato)
             st.subheader("Grafici Affiancati")
             col1, col2 = st.columns(2)
-            
-            # ----- GRAFICO 1: Valore per Categoria -----
             with col1:
                 st.markdown("**Ripartizione Valore per Categoria**")
                 grouped_sorted_value = grouped.sort_values(by='Valore', ascending=False)
@@ -240,8 +192,6 @@ if uploaded_file is not None:
                     bbox_to_anchor=(1, 0, 0.5, 1)
                 )
                 st.pyplot(fig1)
-
-            # ----- GRAFICO 2: Quantità per Categoria -----
             with col2:
                 st.markdown("**Ripartizione Quantità per Categoria**")
                 grouped_sorted_qty = grouped.sort_values(by='PCS', ascending=False)
@@ -268,7 +218,6 @@ if uploaded_file is not None:
                     bbox_to_anchor=(1, 0, 0.5, 1)
                 )
                 st.pyplot(fig2)
-
     except Exception as e:
         st.error(f"Errore nel processare il file: {e}")
 else:
