@@ -10,7 +10,7 @@ import re
 # Imposta il layout wide per utilizzare tutta la larghezza dello schermo
 st.set_page_config(page_title="Report Automatico", layout="wide")
 
-st.title("Report Automatico x veri Scammer")
+st.title("Report Automatico da File Excel")
 st.write("Carica un file Excel contenente i dati per generare il report.")
 
 @st.cache_data(show_spinner=False)
@@ -26,7 +26,9 @@ def get_product_weight_from_url(asin):
     headers = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/90.0.4430.93 Safari/537.36")
+                       "Chrome/90.0.4430.93 Safari/537.36"),
+        "Accept-Language": "it-IT,it;q=0.9",
+        "Referer": "https://www.amazon.it/"
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -121,13 +123,11 @@ if uploaded_file is not None:
             # Se la colonna 'Kod 2' (ASIN) è presente, tenta di ottenere il peso
             if 'Kod 2' in df.columns:
                 st.subheader("Informazioni sul Peso dei Prodotti")
-                # Creiamo una lista per i risultati dei pesi
                 weight_results = []
                 n = len(df)
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
                 
-                # Uso uno spinner per indicare l'elaborazione in corso
                 with st.spinner("Recupero dei pesi in corso..."):
                     for i, asin in enumerate(df['Kod 2']):
                         peso = get_product_weight_from_url(asin)
