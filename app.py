@@ -133,7 +133,7 @@ if uploaded_file is not None:
                 # Uso uno spinner per indicare l'elaborazione in corso
                 with st.spinner("Recupero dei pesi in corso..."):
                     for i, asin in enumerate(df['Kod 2']):
-                        peso = get_product_weight_from_url(asin)
+                        peso = get_product_weight_with_retry(asin)
                         weight_results.append(peso)
                         progress_bar.progress((i + 1) / n)
                         progress_text.text(f"Elaborati {i + 1} di {n} prodotti")
