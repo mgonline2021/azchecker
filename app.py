@@ -14,11 +14,13 @@ st.set_page_config(page_title="Report Automatico", layout="wide")
 st.title("Report Automatico da File Excel")
 st.write("Carica un file Excel contenente i dati per generare il report.")
 
-def extract_weight_from_soup(soup):
+def extract_weight_from_soup(soup, domain):
     """
-    Estrae il peso dal contenuto HTML (BeautifulSoup) cercando nelle tabelle e, in fallback, nella sezione detailBullets.
-    Supporta sia 'kg' che 'Kilogramm'.
+    Estrae il peso dal contenuto HTML (BeautifulSoup) cercando nelle tabelle e, in fallback, 
+    nella sezione detailBullets. Supporta sia 'kg' che 'Kilogramm'.
+    Se il dominio è amazon.de e le precedenti strategie non funzionano, prova anche un selettore esplicito.
     """
+    # Prima strategia: cercare nelle tabelle con ID noti
     table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
     for tid in table_ids:
         table = soup.find("table", id=tid)
@@ -28,28 +30,42 @@ def extract_weight_from_soup(soup):
                 cells = row.find_all("td")
                 for cell in cells:
                     text = cell.get_text(separator=" ", strip=True)
-                    if "kg" in text or "Kilogramm" in text:
-                        match = re.search(r"([\d,.]+)\s*(kg|Kilogramm)", text, re.IGNORECASE)
+                    # Controlla se il testo contiene "kg" o "kilogramm"
+                    if "kg" in text.lower() or "kilogramm" in text.lower():
+                        match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", text, re.IGNORECASE)
                         if match:
                             peso_str = match.group(1).replace(",", ".")
                             try:
                                 return float(peso_str)
                             except ValueError:
                                 continue
-    # Fallback: cerca nella sezione detailBullets_feature_div
+    # Seconda strategia: cerca nella sezione detailBullets_feature_div
     detail_div = soup.find("div", id="detailBullets_feature_div")
     if detail_div:
         bullets = detail_div.find_all("span", class_="a-list-item")
         for bullet in bullets:
             text = bullet.get_text(separator=" ", strip=True)
-            if "kg" in text or "Kilogramm" in text:
-                match = re.search(r"([\d,.]+)\s*(kg|Kilogramm)", text, re.IGNORECASE)
+            if "kg" in text.lower() or "kilogramm" in text.lower():
+                match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", text, re.IGNORECASE)
                 if match:
                     peso_str = match.group(1).replace(",", ".")
                     try:
                         return float(peso_str)
                     except ValueError:
                         continue
+    # Ulteriore fallback per amazon.de: usa il selettore esplicito
+    if domain == "amazon.de":
+        td = soup.select_one("#productDetails_techSpec_section_1 > tbody > tr:nth-child(4) > td")
+        if td:
+            text = td.get_text(separator=" ", strip=True)
+            if "kg" in text.lower() or "kilogramm" in text.lower():
+                match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", text, re.IGNORECASE)
+                if match:
+                    peso_str = match.group(1).replace(",", ".")
+                    try:
+                        return float(peso_str)
+                    except ValueError:
+                        pass
     return None
 
 @st.cache_data(show_spinner=False)
@@ -77,7 +93,7 @@ def get_product_weight_from_url(asin):
             if response.status_code != 200:
                 continue
             soup = BeautifulSoup(response.content, "html.parser")
-            peso = extract_weight_from_soup(soup)
+            peso = extract_weight_from_soup(soup, domain)
             if peso is not None:
                 return peso
         except Exception as e:
@@ -141,7 +157,7 @@ if uploaded_file is not None:
                 with st.spinner("Recupero dei pesi in corso..."):
                     with ThreadPoolExecutor(max_workers=5) as executor:
                         futures = {}
-                        # Uso .items() per iterare sulla Serie
+                        # Usa .items() per iterare sulla Serie degli ASIN
                         for idx, asin in df['Kod 2'].items():
                             futures[executor.submit(get_product_weight_from_url, asin)] = idx
                         
