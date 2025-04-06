@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 import time
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Imposta il layout wide per utilizzare tutta la larghezza dello schermo
 st.set_page_config(page_title="Report Automatico", layout="wide")
@@ -120,23 +121,38 @@ if uploaded_file is not None:
             st.subheader("Riepilogo per Categoria")
             st.dataframe(grouped)
 
-            # Se la colonna 'Kod 2' (ASIN) è presente, tenta di ottenere il peso
+            # Elaborazione parallela per il recupero dei pesi
             if 'Kod 2' in df.columns:
                 st.subheader("Informazioni sul Peso dei Prodotti")
-                weight_results = []
                 n = len(df)
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
                 
+                weight_results = {}
+                # Utilizzo di ThreadPoolExecutor con max_workers=5
                 with st.spinner("Recupero dei pesi in corso..."):
-                    for i, asin in enumerate(df['Kod 2']):
-                        peso = get_product_weight_from_url(asin)
-                        weight_results.append(peso)
-                        progress_bar.progress((i + 1) / n)
-                        progress_text.text(f"Elaborati {i + 1} di {n} prodotti")
+                    with ThreadPoolExecutor(max_workers=5) as executor:
+                        futures = {}
+                        # Manteniamo l'indice per associare il risultato alla riga corretta
+                        for idx, asin in df['Kod 2'].iteritems():
+                            futures[executor.submit(get_product_weight_from_url, asin)] = idx
+                        
+                        completed_count = 0
+                        for future in as_completed(futures):
+                            idx = futures[future]
+                            try:
+                                weight = future.result()
+                            except Exception as e:
+                                weight = None
+                            weight_results[idx] = weight
+                            completed_count += 1
+                            progress_bar.progress(completed_count / n)
+                            progress_text.text(f"Elaborati {completed_count} di {n} prodotti")
                 
                 progress_text.empty()  # Rimuove il messaggio di avanzamento
-                df['Peso'] = weight_results
+                
+                # Ordina i risultati secondo l'ordine originale
+                df['Peso'] = [weight_results[i] for i in sorted(weight_results.keys())]
                 st.dataframe(df[['Kod 2', 'Peso']].head(10))
                 
                 # Calcola statistiche sul peso (escludendo valori nulli)
