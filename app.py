@@ -25,13 +25,13 @@ def get_product_weight_from_url(asin):
       2. Fallback: cercare nella sezione detailBullets_feature_div.
     Un delay casuale viene inserito per ridurre il rischio di blocchi.
     """
-    url = f"https://wwww.amazon.it/dp/{asin}"
+    url = f"https://www.amazon.it/dp/{asin}"
     headers = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
                        "Chrome/90.0.4430.93 Safari/537.36"),
         "Accept-Language": "it-IT,it;q=0.9",
-        "Referer": "https://wwww.amazon.it/"
+        "Referer": "https://www.amazon.it/"
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
