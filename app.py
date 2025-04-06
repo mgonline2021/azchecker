@@ -15,13 +15,6 @@ st.write("Carica un file Excel contenente i dati per generare il report.")
 
 @st.cache_data(show_spinner=False)
 def get_product_weight_from_url(asin):
-    """
-    Effettua il web scraping della pagina Amazon per estrarre il peso del prodotto.
-    Prova diverse strategie:
-      1. Cerca in tabelle con ID noti scansionando tutte le righe.
-      2. Fallback: cerca nella sezione detailBullets_feature_div.
-    Viene aggiunto un delay casuale per ridurre il rischio di blocchi.
-    """
     url = f"https://www.amazon.it/dp/{asin}"
     headers = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -32,13 +25,14 @@ def get_product_weight_from_url(asin):
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
-        time.sleep(random.uniform(1, 2))  # Delay per evitare blocchi
+        st.write(f"ASIN {asin}: HTTP Status Code: {response.status_code}")
+        # Mostra un frammento del contenuto per capire se c'è un messaggio di blocco
+        st.write(f"Contenuto: {response.text[:500]}")
+        time.sleep(random.uniform(1, 2))
         if response.status_code != 200:
             return None
-        
+
         soup = BeautifulSoup(response.content, "html.parser")
-        
-        # Lista di possibili ID per le tabelle contenenti le specifiche
         table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
         for tid in table_ids:
             table = soup.find("table", id=tid)
@@ -48,7 +42,7 @@ def get_product_weight_from_url(asin):
                     cells = row.find_all("td")
                     for cell in cells:
                         text = cell.get_text(separator=" ", strip=True)
-                        if "kg" in text:
+                        if "kg" in text.lower():
                             match = re.search(r"([\d,.]+)\s*kg", text, re.IGNORECASE)
                             if match:
                                 peso_str = match.group(1).replace(",", ".")
@@ -56,13 +50,12 @@ def get_product_weight_from_url(asin):
                                     return float(peso_str)
                                 except ValueError:
                                     continue
-        # Fallback: cerca nella sezione detailBullets_feature_div
         detail_div = soup.find("div", id="detailBullets_feature_div")
         if detail_div:
             bullets = detail_div.find_all("span", class_="a-list-item")
             for bullet in bullets:
                 text = bullet.get_text(separator=" ", strip=True)
-                if "kg" in text:
+                if "kg" in text.lower():
                     match = re.search(r"([\d,.]+)\s*kg", text, re.IGNORECASE)
                     if match:
                         peso_str = match.group(1).replace(",", ".")
@@ -72,7 +65,7 @@ def get_product_weight_from_url(asin):
                             continue
         return None
     except Exception as e:
-        print(f"Errore per ASIN {asin}: {e}")
+        st.write(f"Errore per ASIN {asin}: {e}")
         return None
 
 # Carica il file Excel tramite l'interfaccia web
