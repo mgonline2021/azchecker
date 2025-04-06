@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 import time
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Imposta il layout wide per utilizzare tutta la larghezza dello schermo
 st.set_page_config(page_title="Report Automatico", layout="wide")
@@ -16,18 +17,21 @@ st.write("Carica un file Excel contenente i dati per generare il report.")
 @st.cache_data(show_spinner=False)
 def get_product_weight_from_url(asin):
     """
-    Effettua il web scraping della pagina Amazon per estrarre il peso del prodotto
+    Effettua lo scraping della pagina Amazon per estrarre il peso del prodotto
     utilizzando esclusivamente il dominio amazon.it.
+    Usa gli header "Accept-Language" e "Referer" per aumentare le possibilità di successo.
     Vengono provate due strategie:
-      1. Cerca nelle tabelle con ID noti.
-      2. Fallback: cerca nella sezione detailBullets_feature_div.
-    Viene aggiunto un delay casuale per ridurre il rischio di blocchi.
+      1. Cercare nelle tabelle con ID noti.
+      2. Fallback: cercare nella sezione detailBullets_feature_div.
+    Un delay casuale viene inserito per ridurre il rischio di blocchi.
     """
     url = f"https://www.amazon.it/dp/{asin}"
     headers = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/90.0.4430.93 Safari/537.36")
+                       "Chrome/90.0.4430.93 Safari/537.36"),
+        "Accept-Language": "it-IT,it;q=0.9",
+        "Referer": "https://www.amazon.it/"
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -36,6 +40,7 @@ def get_product_weight_from_url(asin):
             return None
 
         soup = BeautifulSoup(response.content, "html.parser")
+        
         # Strategia 1: Cerca nelle tabelle con ID noti
         table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
         for tid in table_ids:
@@ -46,8 +51,10 @@ def get_product_weight_from_url(asin):
                     cells = row.find_all("td")
                     for cell in cells:
                         text = cell.get_text(separator=" ", strip=True)
-                        if "kg" in text:
-                            match = re.search(r"([\d,.]+)\s*kg", text, re.IGNORECASE)
+                        if "kg" in text.lower():
+                            # Se il testo contiene ";" prendi la parte dopo
+                            candidate = text.split(";")[-1].strip() if ";" in text else text
+                            match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", candidate, re.IGNORECASE)
                             if match:
                                 peso_str = match.group(1).replace(",", ".")
                                 try:
@@ -57,17 +64,17 @@ def get_product_weight_from_url(asin):
         # Strategia 2: Fallback nella sezione detailBullets_feature_div
         detail_div = soup.find("div", id="detailBullets_feature_div")
         if detail_div:
-            bullets = detail_div.find_all("span", class_="a-list-item")
-            for bullet in bullets:
-                text = bullet.get_text(separator=" ", strip=True)
-                if "kg" in text:
-                    match = re.search(r"([\d,.]+)\s*kg", text, re.IGNORECASE)
-                    if match:
-                        peso_str = match.group(1).replace(",", ".")
-                        try:
-                            return float(peso_str)
-                        except ValueError:
-                            continue
+            items = detail_div.find_all("span", class_="a-list-item")
+            for item in items:
+                text = item.get_text(separator=" ", strip=True)
+                candidate = text.split(";")[-1].strip() if ";" in text else text
+                match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", candidate, re.IGNORECASE)
+                if match:
+                    peso_str = match.group(1).replace(",", ".")
+                    try:
+                        return float(peso_str)
+                    except ValueError:
+                        continue
         return None
     except Exception as e:
         print(f"Errore per ASIN {asin}: {e}")
@@ -89,7 +96,6 @@ if uploaded_file is not None:
         if missing_cols:
             st.error(f"Le seguenti colonne sono mancanti: {', '.join(missing_cols)}")
         else:
-            # Converte le colonne in formato numerico e rimuove eventuali righe con dati mancanti
             df['PCS'] = pd.to_numeric(df['PCS'], errors='coerce')
             df['Cena regularna brutto'] = pd.to_numeric(df['Cena regularna brutto'], errors='coerce')
             df = df.dropna(subset=required_columns)
@@ -106,25 +112,24 @@ if uploaded_file is not None:
             st.write(f"**Totale Pezzi:** {total_pcs}")
             st.write(f"**Valore Retail Totale:** {total_value:.2f} EUR")
             st.write(f"**Prezzo Medio:** {avg_price:.2f} EUR")
+            
             st.subheader("Riepilogo per Categoria")
             st.dataframe(grouped)
             
-            # Recupero dei pesi usando esclusivamente amazon.it
+            # Recupero dei pesi dalla colonna 'Kod 2'
             if 'Kod 2' in df.columns:
                 st.subheader("Informazioni sul Peso dei Prodotti")
-                weight_results = []
                 n = len(df)
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
-                
+                weight_results = []
                 with st.spinner("Recupero dei pesi in corso..."):
                     for i, asin in enumerate(df['Kod 2']):
                         peso = get_product_weight_from_url(asin)
                         weight_results.append(peso)
                         progress_bar.progress((i + 1) / n)
                         progress_text.text(f"Elaborati {i + 1} di {n} prodotti")
-                
-                progress_text.empty()  # Rimuove il messaggio di avanzamento
+                progress_text.empty()
                 df['Peso'] = weight_results
                 st.dataframe(df[['Kod 2', 'Peso']].head(10))
                 
