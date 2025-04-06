@@ -71,11 +71,7 @@ def extract_weight_from_soup(soup):
 
 @st.cache_data(show_spinner=False)
 def get_product_weight_from_url(asin):
-    """
-    Recupera il peso del prodotto dalla pagina di amazon.it.
-    Utilizza gli header "Accept-Language" e "Referer" per simulare una richiesta da browser.
-    """
-    url = f"https://www.amazon.it/dp/{asin}"
+    url = f"https://www.amazon.it/dp/{asin}?th=1"
     headers = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -87,13 +83,62 @@ def get_product_weight_from_url(asin):
         response = requests.get(url, headers=headers, timeout=10)
         time.sleep(random.uniform(1, 2))
         if response.status_code != 200:
+            st.write(f"ASIN {asin}: HTTP Status Code: {response.status_code}")
             return None
+
         soup = BeautifulSoup(response.content, "html.parser")
-        peso = extract_weight_from_soup(soup)
-        return peso
+        # Per il debug: mostra i primi 2000 caratteri dell'HTML per un ASIN specifico
+        st.write(f"Debug per ASIN {asin}:", soup.prettify()[:2000])
+        
+        # Uso del selettore specifico
+        td = soup.select_one("#productDetails_techSpec_section_1 > tbody > tr:nth-child(2) > td")
+        if td:
+            text = td.get_text(separator=" ", strip=True)
+            match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", text, re.IGNORECASE)
+            if match:
+                peso_str = match.group(1).replace(",", ".")
+                try:
+                    return float(peso_str)
+                except ValueError:
+                    pass
+
+        # Fallback: cerca nelle tabelle con ID noti
+        table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
+        for tid in table_ids:
+            table = soup.find("table", id=tid)
+            if table:
+                rows = table.find_all("tr")
+                for row in rows:
+                    cells = row.find_all("td")
+                    for cell in cells:
+                        text = cell.get_text(separator=" ", strip=True)
+                        if "kg" in text.lower():
+                            match = re.search(r"([\d,.]+)\s*kg", text, re.IGNORECASE)
+                            if match:
+                                peso_str = match.group(1).replace(",", ".")
+                                try:
+                                    return float(peso_str)
+                                except ValueError:
+                                    continue
+        # Fallback: cerca nella sezione detailBullets_feature_div
+        detail_div = soup.find("div", id="detailBullets_feature_div")
+        if detail_div:
+            items = detail_div.find_all("span", class_="a-list-item")
+            for item in items:
+                text = item.get_text(separator=" ", strip=True)
+                if "kg" in text.lower():
+                    match = re.search(r"([\d,.]+)\s*kg", text, re.IGNORECASE)
+                    if match:
+                        peso_str = match.group(1).replace(",", ".")
+                        try:
+                            return float(peso_str)
+                        except ValueError:
+                            continue
+        return None
     except Exception as e:
         st.write(f"Errore per ASIN {asin}: {e}")
         return None
+
 
 # Carica il file Excel tramite l'interfaccia web
 uploaded_file = st.file_uploader("Carica il file Excel", type=["xlsx"])
