@@ -13,7 +13,7 @@ st.title("Report Automatico da File Excel")
 st.write("Carica un file Excel contenente i dati per generare il report.")
 
 def get_product_weight_from_url(asin, session, max_retries=3):
-url = f"https://www.amazon.it/dp/{asin}?th=1"
+    url = f"https://www.amazon.it/dp/{asin}?th=1"
     headers = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
