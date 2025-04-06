@@ -16,11 +16,14 @@ st.write("Carica un file Excel contenente i dati per generare il report.")
 
 def extract_weight_from_soup(soup, domain):
     """
-    Estrae il peso dal contenuto HTML (BeautifulSoup) cercando nelle tabelle e, in fallback, 
-    nella sezione detailBullets. Supporta sia 'kg' che 'Kilogramm'.
-    Se il dominio è amazon.de e le precedenti strategie non funzionano, prova anche un selettore esplicito.
+    Estrae il peso dal contenuto HTML (BeautifulSoup) cercando:
+      1. All'interno di tabelle con ID noti.
+      2. Nella sezione detailBullets_feature_div.
+      3. Come fallback, nel testo intero della pagina.
+    Supporta sia 'kg' che 'Kilogramm'.
+    Se il dominio è amazon.de, prova anche un selettore esplicito.
     """
-    # Prima strategia: cercare nelle tabelle con ID noti
+    # Strategia 1: Cerca nelle tabelle con ID noti
     table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
     for tid in table_ids:
         table = soup.find("table", id=tid)
@@ -30,16 +33,20 @@ def extract_weight_from_soup(soup, domain):
                 cells = row.find_all("td")
                 for cell in cells:
                     text = cell.get_text(separator=" ", strip=True)
-                    # Controlla se il testo contiene "kg" o "kilogramm"
                     if "kg" in text.lower() or "kilogramm" in text.lower():
-                        match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", text, re.IGNORECASE)
+                        # Se il testo contiene un punto e virgola, prendi la parte dopo
+                        if ";" in text:
+                            candidate = text.split(";")[-1].strip()
+                        else:
+                            candidate = text
+                        match = re.search(r"([\d,.]+)\s*(kg|kilogramm)", candidate, re.IGNORECASE)
                         if match:
                             peso_str = match.group(1).replace(",", ".")
                             try:
                                 return float(peso_str)
                             except ValueError:
                                 continue
-    # Seconda strategia: cerca nella sezione detailBullets_feature_div
+    # Strategia 2: Cerca nella sezione detailBullets_feature_div
     detail_div = soup.find("div", id="detailBullets_feature_div")
     if detail_div:
         bullets = detail_div.find_all("span", class_="a-list-item")
@@ -53,7 +60,7 @@ def extract_weight_from_soup(soup, domain):
                         return float(peso_str)
                     except ValueError:
                         continue
-    # Ulteriore fallback per amazon.de: usa il selettore esplicito
+    # Strategia 3: Se il dominio è amazon.de, usa un selettore esplicito
     if domain == "amazon.de":
         td = soup.select_one("#productDetails_techSpec_section_1 > tbody > tr:nth-child(4) > td")
         if td:
@@ -66,6 +73,17 @@ def extract_weight_from_soup(soup, domain):
                         return float(peso_str)
                     except ValueError:
                         pass
+    # Strategia 4 (fallback generale): Scansiona l'intero testo della pagina
+    page_text = soup.get_text(separator=" ", strip=True)
+    matches = re.findall(r"([\d,.]+)\s*(kg|kilogramm)", page_text, re.IGNORECASE)
+    if matches:
+        # Ritorna il primo match (potrebbe non essere il dato corretto)
+        peso_str, _ = matches[0]
+        peso_str = peso_str.replace(",", ".")
+        try:
+            return float(peso_str)
+        except ValueError:
+            pass
     return None
 
 @st.cache_data(show_spinner=False)
@@ -157,7 +175,7 @@ if uploaded_file is not None:
                 with st.spinner("Recupero dei pesi in corso..."):
                     with ThreadPoolExecutor(max_workers=5) as executor:
                         futures = {}
-                        # Usa .items() per iterare sulla Serie degli ASIN
+                        # Itera sulla Serie degli ASIN usando .items()
                         for idx, asin in df['Kod 2'].items():
                             futures[executor.submit(get_product_weight_from_url, asin)] = idx
                         
