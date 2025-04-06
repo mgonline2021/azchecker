@@ -133,8 +133,8 @@ if uploaded_file is not None:
                 with st.spinner("Recupero dei pesi in corso..."):
                     with ThreadPoolExecutor(max_workers=5) as executor:
                         futures = {}
-                        # Manteniamo l'indice per associare il risultato alla riga corretta
-                        for idx, asin in df['Kod 2'].iteritems():
+                        # Uso .items() per iterare sulla Serie
+                        for idx, asin in df['Kod 2'].items():
                             futures[executor.submit(get_product_weight_from_url, asin)] = idx
                         
                         completed_count = 0
