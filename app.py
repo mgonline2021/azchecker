@@ -14,7 +14,7 @@ st.title("Report Automatico da File Excel")
 st.write("Carica un file Excel contenente i dati per generare il report.")
 
 @st.cache_data(show_spinner=False)
-def get_product_weight_from_url(asin):
+def get_product_weight_with_retry(asin, max_retries=3):
     url = f"https://www.amazon.it/dp/{asin}"
     headers = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -23,25 +23,37 @@ def get_product_weight_from_url(asin):
         "Accept-Language": "it-IT,it;q=0.9",
         "Referer": "https://www.amazon.it/"
     }
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        st.write(f"ASIN {asin}: HTTP Status Code: {response.status_code}")
-        # Mostra un frammento del contenuto per capire se c'è un messaggio di blocco
-        st.write(f"Contenuto: {response.text[:500]}")
-        time.sleep(random.uniform(1, 2))
-        if response.status_code != 200:
-            return None
-
-        soup = BeautifulSoup(response.content, "html.parser")
-        table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
-        for tid in table_ids:
-            table = soup.find("table", id=tid)
-            if table:
-                rows = table.find_all("tr")
-                for row in rows:
-                    cells = row.find_all("td")
-                    for cell in cells:
-                        text = cell.get_text(separator=" ", strip=True)
+    
+    delay = 1  # Iniziamo con 1 secondo di delay
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            st.write(f"ASIN {asin}: Tentativo {attempt+1}, HTTP Status Code: {response.status_code}")
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, "html.parser")
+                # Inserisci qui la tua logica di estrazione (come nel codice precedente)
+                table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
+                for tid in table_ids:
+                    table = soup.find("table", id=tid)
+                    if table:
+                        rows = table.find_all("tr")
+                        for row in rows:
+                            cells = row.find_all("td")
+                            for cell in cells:
+                                text = cell.get_text(separator=" ", strip=True)
+                                if "kg" in text.lower():
+                                    match = re.search(r"([\d,.]+)\s*kg", text, re.IGNORECASE)
+                                    if match:
+                                        peso_str = match.group(1).replace(",", ".")
+                                        try:
+                                            return float(peso_str)
+                                        except ValueError:
+                                            continue
+                detail_div = soup.find("div", id="detailBullets_feature_div")
+                if detail_div:
+                    bullets = detail_div.find_all("span", class_="a-list-item")
+                    for bullet in bullets:
+                        text = bullet.get_text(separator=" ", strip=True)
                         if "kg" in text.lower():
                             match = re.search(r"([\d,.]+)\s*kg", text, re.IGNORECASE)
                             if match:
@@ -50,23 +62,19 @@ def get_product_weight_from_url(asin):
                                     return float(peso_str)
                                 except ValueError:
                                     continue
-        detail_div = soup.find("div", id="detailBullets_feature_div")
-        if detail_div:
-            bullets = detail_div.find_all("span", class_="a-list-item")
-            for bullet in bullets:
-                text = bullet.get_text(separator=" ", strip=True)
-                if "kg" in text.lower():
-                    match = re.search(r"([\d,.]+)\s*kg", text, re.IGNORECASE)
-                    if match:
-                        peso_str = match.group(1).replace(",", ".")
-                        try:
-                            return float(peso_str)
-                        except ValueError:
-                            continue
-        return None
-    except Exception as e:
-        st.write(f"Errore per ASIN {asin}: {e}")
-        return None
+                return None
+            else:
+                # Se il codice non è 200, aspetta e riprova
+                time.sleep(delay)
+                delay *= 2  # Backoff esponenziale
+        except Exception as e:
+            st.write(f"Errore per ASIN {asin} nel tentativo {attempt+1}: {e}")
+            time.sleep(delay)
+            delay *= 2
+    return None
+
+# Puoi sostituire get_product_weight_from_url con get_product_weight_with_retry nella logica dell'app
+
 
 # Carica il file Excel tramite l'interfaccia web
 uploaded_file = st.file_uploader("Carica il file Excel", type=["xlsx"])
