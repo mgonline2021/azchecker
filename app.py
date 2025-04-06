@@ -75,7 +75,7 @@ def get_product_weight_from_url(asin):
     Recupera il peso del prodotto dalla pagina di amazon.it.
     Utilizza gli header "Accept-Language" e "Referer" per simulare una richiesta da browser.
     """
-    url = f"https://www.amazon.it/dp/{asin}?th=1"
+    url = f"https://www.amazon.it/dp/{asin}"
     headers = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
