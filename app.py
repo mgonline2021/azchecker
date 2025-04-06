@@ -6,15 +6,13 @@ from bs4 import BeautifulSoup
 import time
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Imposta il layout wide per utilizzare tutta la larghezza dello schermo
 st.set_page_config(page_title="Report Automatico", layout="wide")
-
 st.title("Report Automatico da File Excel")
 st.write("Carica un file Excel contenente i dati per generare il report.")
 
-@st.cache_data(show_spinner=False)
-def get_product_weight_with_retry(asin, max_retries=3):
+def get_product_weight_from_url(asin, session, max_retries=3):
     url = f"https://www.amazon.it/dp/{asin}"
     headers = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -23,15 +21,13 @@ def get_product_weight_with_retry(asin, max_retries=3):
         "Accept-Language": "it-IT,it;q=0.9",
         "Referer": "https://www.amazon.it/"
     }
-    
-    delay = 1  # Iniziamo con 1 secondo di delay
+    delay = 2  # inizia con 2 secondi
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, headers=headers, timeout=10)
+            response = session.get(url, headers=headers, timeout=10)
             st.write(f"ASIN {asin}: Tentativo {attempt+1}, HTTP Status Code: {response.status_code}")
             if response.status_code == 200:
                 soup = BeautifulSoup(response.content, "html.parser")
-                # Inserisci qui la tua logica di estrazione (come nel codice precedente)
                 table_ids = ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]
                 for tid in table_ids:
                     table = soup.find("table", id=tid)
@@ -64,7 +60,7 @@ def get_product_weight_with_retry(asin, max_retries=3):
                                     continue
                 return None
             else:
-                # Se il codice non è 200, aspetta e riprova
+                st.write(f"Errore HTTP {response.status_code} per ASIN {asin}. Riprovo...")
                 time.sleep(delay)
                 delay *= 2  # Backoff esponenziale
         except Exception as e:
@@ -73,75 +69,63 @@ def get_product_weight_with_retry(asin, max_retries=3):
             delay *= 2
     return None
 
+@st.cache_data(show_spinner=False)
+def get_weight_for_asin_list(asins):
+    weight_results = {}
+    with requests.Session() as session:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(get_product_weight_from_url, asin, session): idx
+                       for idx, asin in enumerate(asins)}
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    weight = future.result()
+                except Exception:
+                    weight = None
+                weight_results[idx] = weight
+    return [weight_results[i] for i in sorted(weight_results.keys())]
 
-
-# Carica il file Excel tramite l'interfaccia web
 uploaded_file = st.file_uploader("Carica il file Excel", type=["xlsx"])
-
 if uploaded_file is not None:
     try:
-        # Legge il file Excel (modifica il nome del foglio se necessario)
         df = pd.read_excel(uploaded_file, sheet_name="Sheet1")
-        
         st.subheader("Anteprima dei dati")
         st.dataframe(df.head())
-
-        # Verifica che le colonne richieste siano presenti
         required_columns = ['Kategoria', 'PCS', 'Cena regularna brutto']
         missing_cols = [col for col in required_columns if col not in df.columns]
         if missing_cols:
-            st.error(f"Le seguenti colonne sono mancanti nel file: {', '.join(missing_cols)}")
+            st.error(f"Le seguenti colonne sono mancanti: {', '.join(missing_cols)}")
         else:
-            # Converte le colonne in formato numerico e rimuove eventuali righe con dati mancanti
             df['PCS'] = pd.to_numeric(df['PCS'], errors='coerce')
             df['Cena regularna brutto'] = pd.to_numeric(df['Cena regularna brutto'], errors='coerce')
             df = df.dropna(subset=required_columns)
-
-            # Calcola il valore totale per ogni prodotto
             df['Valore'] = df['Cena regularna brutto'] * df['PCS']
-
-            # Raggruppa per categoria e calcola totali e prezzo medio
-            grouped = df.groupby('Kategoria').agg({
-                'PCS': 'sum',
-                'Valore': 'sum'
-            }).reset_index()
+            grouped = df.groupby('Kategoria').agg({'PCS': 'sum', 'Valore': 'sum'}).reset_index()
             grouped['PrezzoMedio'] = grouped['Valore'] / grouped['PCS']
-
-            # Calcola i totali globali
             total_pcs = grouped['PCS'].sum()
             total_value = grouped['Valore'].sum()
             avg_price = total_value / total_pcs if total_pcs != 0 else 0
-
             st.subheader("Riepilogo Globale")
             st.write(f"**Totale Pezzi:** {total_pcs}")
             st.write(f"**Valore Retail Totale:** {total_value:.2f} EUR")
             st.write(f"**Prezzo Medio:** {avg_price:.2f} EUR")
-
             st.subheader("Riepilogo per Categoria")
             st.dataframe(grouped)
-
-            # Se la colonna 'Kod 2' (ASIN) è presente, tenta di ottenere il peso
             if 'Kod 2' in df.columns:
                 st.subheader("Informazioni sul Peso dei Prodotti")
-                # Creiamo una lista per i risultati dei pesi
-                weight_results = []
                 n = len(df)
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
-                
-                # Uso uno spinner per indicare l'elaborazione in corso
+                asins = df['Kod 2'].tolist()
+                weights = []
                 with st.spinner("Recupero dei pesi in corso..."):
-                    for i, asin in enumerate(df['Kod 2']):
-                        peso = get_product_weight_with_retry(asin)
-                        weight_results.append(peso)
+                    weights = get_weight_for_asin_list(asins)
+                    for i in range(n):
                         progress_bar.progress((i + 1) / n)
                         progress_text.text(f"Elaborati {i + 1} di {n} prodotti")
-                
-                progress_text.empty()  # Rimuove il messaggio di avanzamento
-                df['Peso'] = weight_results
+                progress_text.empty()
+                df['Peso'] = weights
                 st.dataframe(df[['Kod 2', 'Peso']].head(10))
-                
-                # Calcola statistiche sul peso (escludendo valori nulli)
                 peso_validi = pd.to_numeric(df['Peso'], errors='coerce').dropna()
                 if not peso_validi.empty:
                     peso_totale = peso_validi.sum()
@@ -152,12 +136,8 @@ if uploaded_file is not None:
                     st.warning("Non sono stati trovati dati di peso validi per i prodotti.")
             else:
                 st.warning("La colonna 'Kod 2' (ASIN) non è presente nel file.")
-
-            # Grafici affiancati
             st.subheader("Grafici Affiancati")
             col1, col2 = st.columns(2)
-            
-            # ----- GRAFICO 1: Valore per Categoria -----
             with col1:
                 st.markdown("**Ripartizione Valore per Categoria**")
                 grouped_sorted_value = grouped.sort_values(by='Valore', ascending=False)
@@ -184,8 +164,6 @@ if uploaded_file is not None:
                     bbox_to_anchor=(1, 0, 0.5, 1)
                 )
                 st.pyplot(fig1)
-
-            # ----- GRAFICO 2: Quantità per Categoria -----
             with col2:
                 st.markdown("**Ripartizione Quantità per Categoria**")
                 grouped_sorted_qty = grouped.sort_values(by='PCS', ascending=False)
@@ -212,9 +190,7 @@ if uploaded_file is not None:
                     bbox_to_anchor=(1, 0, 0.5, 1)
                 )
                 st.pyplot(fig2)
-
     except Exception as e:
         st.error(f"Errore nel processare il file: {e}")
 else:
     st.info("Attendi il caricamento del file Excel per generare il report.")
-    
