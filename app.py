@@ -73,7 +73,6 @@ def get_product_weight_with_retry(asin, max_retries=3):
             delay *= 2
     return None
 
-# Puoi sostituire get_product_weight_from_url con get_product_weight_with_retry nella logica dell'app
 
 
 # Carica il file Excel tramite l'interfaccia web
