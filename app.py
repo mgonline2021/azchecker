@@ -14,10 +14,10 @@ st.write("Carica uno o più file Excel contenenti i dati per generare il report.
 # File uploader per il caricamento multiplo dei file Excel
 uploaded_files = st.file_uploader("Carica i file Excel", type=["xlsx"], accept_multiple_files=True)
 
-# Placeholder per il pulsante di download ZIP, posizionato in alto
+# Placeholder per i pulsanti di download ZIP e Classifica, posizionati in alto
 zip_btn_placeholder = st.empty()
+ranking_btn_placeholder = st.empty()
 
-# Se sono presenti file caricati, mostra un messaggio e l'indicatore di avanzamento
 if uploaded_files:
     total_files = len(uploaded_files)
     st.write(f"{total_files} file caricati. Inizio del processamento...")
@@ -28,10 +28,8 @@ if uploaded_files:
     agg_total_pcs = 0
     agg_total_value = 0.0
     
-    # Lista per salvare tutti i PDF generati (nome, buffer)
+    # Liste per salvare i PDF generati e i dati per la classifica
     all_pdf_reports = []
-    
-    # Lista per memorizzare i dati per la classifica (ranking)
     ranking_data = []
     
     def process_file(file):
@@ -201,7 +199,7 @@ if uploaded_files:
         La classifica mostra:
           - Rank, Nome Documento, Totale Pezzi, Valore Retail Totale e Prezzo Medio.
         """
-        # Ordina la lista in ordine decrescente in base al valore retail totale
+        # Ordina in ordine decrescente in base al valore retail totale
         sorted_data = sorted(ranking_data, key=lambda x: x['total_value'], reverse=True)
         
         pdf = FPDF()
@@ -211,7 +209,7 @@ if uploaded_files:
         pdf.cell(0, 10, "Classifica Documenti", ln=1, align="C")
         pdf.ln(10)
         
-        # Intestazione tabella
+        # Intestazione della tabella
         pdf.set_font("Arial", 'B', 12)
         pdf.cell(20, 10, "Rank", border=1, align="C")
         pdf.cell(60, 10, "Documento", border=1, align="C")
@@ -297,7 +295,6 @@ if uploaded_files:
         except Exception as e:
             st.error(f"Errore nel processare il file {uploaded_file.name}: {e}")
         
-        # Aggiornamento della barra di avanzamento complessiva
         overall_progress.progress((i + 1) / total_files)
     
     # Calcolo del report aggregato complessivo
@@ -307,7 +304,7 @@ if uploaded_files:
     st.write(f"**Valore Retail Totale:** {agg_total_value:.2f} EUR")
     st.write(f"**Prezzo Medio:** {overall_avg_price:.2f} EUR")
     
-    # Genera il file ZIP contenente tutti i PDF
+    # Genera e posiziona in alto il pulsante per scaricare lo ZIP contenente tutti i PDF
     if all_pdf_reports:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -322,17 +319,16 @@ if uploaded_files:
             mime="application/zip"
         )
     
-    # Genera il PDF della classifica se sono stati processati dei file
+    # Genera e posiziona in alto anche il pulsante per scaricare il report della classifica
     if ranking_data:
         ranking_pdf_buffer = generate_ranking_pdf(ranking_data)
-        st.subheader("Classifica Documenti per Valore Retail Totale")
-        st.download_button(
+        ranking_btn_placeholder.download_button(
             label="Scarica Report Classifica (PDF)",
             data=ranking_pdf_buffer,
             file_name="classifica_documenti.pdf",
             mime="application/pdf"
         )
     
-    overall_progress_text.empty()  # Rimuove il messaggio di avanzamento
+    overall_progress_text.empty()
 else:
     st.info("Attendi il caricamento dei file Excel per generare il report.")
