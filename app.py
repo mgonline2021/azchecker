@@ -17,7 +17,7 @@ uploaded_files = st.file_uploader("Carica i file Excel", type=["xlsx"], accept_m
 # Placeholder per il pulsante di download ZIP, posizionato in alto
 zip_btn_placeholder = st.empty()
 
-# Se sono presenti file caricati, creiamo un indicatore di avanzamento complessivo
+# Se sono presenti file caricati, mostra un messaggio e l'indicatore di avanzamento
 if uploaded_files:
     total_files = len(uploaded_files)
     st.write(f"{total_files} file caricati. Inizio del processamento...")
@@ -27,10 +27,13 @@ if uploaded_files:
     # Variabili per il report aggregato complessivo
     agg_total_pcs = 0
     agg_total_value = 0.0
+    
     # Lista per salvare tutti i PDF generati (nome, buffer)
     all_pdf_reports = []
     
-    # Funzione per processare ciascun file
+    # Lista per memorizzare i dati per la classifica (ranking)
+    ranking_data = []
+    
     def process_file(file):
         """
         Legge il file Excel e processa i dati:
@@ -191,8 +194,46 @@ if uploaded_files:
         pdf_bytes = pdf.output(dest='S').encode('latin1')
         pdf_buffer = io.BytesIO(pdf_bytes)
         return pdf_buffer
+    
+    def generate_ranking_pdf(ranking_data):
+        """
+        Genera un PDF che mostra la classifica dei documenti in base al valore retail totale.
+        La classifica mostra:
+          - Rank, Nome Documento, Totale Pezzi, Valore Retail Totale e Prezzo Medio.
+        """
+        # Ordina la lista in ordine decrescente in base al valore retail totale
+        sorted_data = sorted(ranking_data, key=lambda x: x['total_value'], reverse=True)
+        
+        pdf = FPDF()
+        pdf.add_page()
+        
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(0, 10, "Classifica Documenti", ln=1, align="C")
+        pdf.ln(10)
+        
+        # Intestazione tabella
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(20, 10, "Rank", border=1, align="C")
+        pdf.cell(60, 10, "Documento", border=1, align="C")
+        pdf.cell(30, 10, "Totale Pezzi", border=1, align="C")
+        pdf.cell(40, 10, "Valore Retail", border=1, align="C")
+        pdf.cell(40, 10, "Prezzo Medio", border=1, align="C")
+        pdf.ln()
+        
+        pdf.set_font("Arial", '', 12)
+        for i, item in enumerate(sorted_data):
+            pdf.cell(20, 10, str(i+1), border=1, align="C")
+            pdf.cell(60, 10, str(item['filename']), border=1)
+            pdf.cell(30, 10, str(item['total_pcs']), border=1, align="C")
+            pdf.cell(40, 10, f"{item['total_value']:.2f}", border=1, align="C")
+            pdf.cell(40, 10, f"{item['avg_price']:.2f}", border=1, align="C")
+            pdf.ln()
+        
+        pdf_bytes = pdf.output(dest='S').encode('latin1')
+        pdf_buffer = io.BytesIO(pdf_bytes)
+        return pdf_buffer
 
-    # Elaborazione di ogni file
+    # Elaborazione di ogni file caricato
     for i, uploaded_file in enumerate(uploaded_files):
         overall_progress_text.text(f"Elaborato {i+1} di {total_files} file...")
         try:
@@ -202,7 +243,7 @@ if uploaded_files:
             grouped = data['grouped']
             global_summary = data['global_summary']
             
-            # Visualizzazione dati singoli
+            # Visualizzazione dati
             st.write("Anteprima dei dati:")
             st.dataframe(df.head())
             st.write("Riepilogo Globale:")
@@ -222,7 +263,7 @@ if uploaded_files:
             buf1 = save_fig_to_buffer(fig1)
             buf2 = save_fig_to_buffer(fig2)
             
-            # Prepara il report PDF per il file corrente
+            # Prepara i dati per il report PDF
             report_data = {
                 'global_summary': global_summary,
                 'grouped': grouped,
@@ -241,14 +282,22 @@ if uploaded_files:
                 mime="application/pdf"
             )
             
-            # Aggrega i dati per il report complessivo
+            # Memorizza i dati per la classifica
+            ranking_data.append({
+                'filename': uploaded_file.name,
+                'total_pcs': global_summary['total_pcs'],
+                'total_value': global_summary['total_value'],
+                'avg_price': global_summary['avg_price']
+            })
+            
+            # Aggrega i dati globali
             agg_total_pcs += global_summary['total_pcs']
             agg_total_value += global_summary['total_value']
             
         except Exception as e:
             st.error(f"Errore nel processare il file {uploaded_file.name}: {e}")
         
-        # Aggiorna la barra di avanzamento complessiva
+        # Aggiornamento della barra di avanzamento complessiva
         overall_progress.progress((i + 1) / total_files)
     
     # Calcolo del report aggregato complessivo
@@ -266,12 +315,22 @@ if uploaded_files:
                 pdf_buf.seek(0)
                 zip_file.writestr(filename, pdf_buf.read())
         zip_buffer.seek(0)
-        # Inserisce il pulsante per scaricare lo ZIP in alto, utilizzando il placeholder creato all'inizio
         zip_btn_placeholder.download_button(
             label="Scarica tutti i PDF (ZIP)",
             data=zip_buffer,
             file_name="reports.zip",
             mime="application/zip"
+        )
+    
+    # Genera il PDF della classifica se sono stati processati dei file
+    if ranking_data:
+        ranking_pdf_buffer = generate_ranking_pdf(ranking_data)
+        st.subheader("Classifica Documenti per Valore Retail Totale")
+        st.download_button(
+            label="Scarica Report Classifica (PDF)",
+            data=ranking_pdf_buffer,
+            file_name="classifica_documenti.pdf",
+            mime="application/pdf"
         )
     
     overall_progress_text.empty()  # Rimuove il messaggio di avanzamento
