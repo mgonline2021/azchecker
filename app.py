@@ -4,13 +4,14 @@ import matplotlib.pyplot as plt
 import io
 from fpdf import FPDF
 from PIL import Image
+import zipfile  # Importa la libreria zipfile per comprimere i PDF
 
 # Imposta il layout wide per utilizzare tutta la larghezza dello schermo
 st.set_page_config(page_title="Report Automatico", layout="wide")
 st.title("Report Automatico da File Excel")
 st.write("Carica uno o più file Excel contenenti i dati per generare il report.")
 
-# Modifica del file uploader per permettere il caricamento di più file contemporaneamente
+# File uploader per il caricamento multiplo dei file Excel
 uploaded_files = st.file_uploader("Carica i file Excel", type=["xlsx"], accept_multiple_files=True)
 
 def process_file(file):
@@ -111,7 +112,7 @@ def save_fig_to_buffer(fig):
     buf.seek(0)
     return buf
 
-def generate_pdf_report(report_data, filename):
+def generate_pdf_report(report_data):
     """
     Genera un report PDF utilizzando FPDF.
     Il report include:
@@ -141,7 +142,7 @@ def generate_pdf_report(report_data, filename):
     pdf.cell(0, 10, f"Prezzo Medio: {global_summary['avg_price']:.2f} EUR", ln=1)
     pdf.ln(10)
     
-    # Riepilogo per categoria - creazione di una tabella manuale
+    # Riepilogo per categoria - Tabella manuale
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(50, 8, "Kategoria", border=1)
     pdf.cell(30, 8, "PCS", border=1)
@@ -179,7 +180,9 @@ def generate_pdf_report(report_data, filename):
     return pdf_buffer
 
 if uploaded_files:
-    # Per ogni file caricato, si esegue il processamento e la generazione del PDF
+    # Lista per salvare tutti i PDF generati, per il download combinato in ZIP.
+    all_pdf_reports = []
+    
     for uploaded_file in uploaded_files:
         st.subheader(f"Report per il file: {uploaded_file.name}")
         try:
@@ -210,7 +213,7 @@ if uploaded_files:
             buf1 = save_fig_to_buffer(fig1)
             buf2 = save_fig_to_buffer(fig2)
             
-            # Prepara i dati per il report
+            # Prepara i dati per il report PDF
             report_data = {
                 'global_summary': global_summary,
                 'grouped': grouped,
@@ -219,15 +222,36 @@ if uploaded_files:
             }
             
             # Genera il report PDF per questo file
-            pdf_buffer = generate_pdf_report(report_data, uploaded_file.name)
+            pdf_buffer = generate_pdf_report(report_data)
+            
+            # Aggiungi il PDF nella lista per il download combinato
+            pdf_filename = f"report_{uploaded_file.name}.pdf"
+            all_pdf_reports.append((pdf_filename, pdf_buffer))
+            
+            # Pulsante per il download del singolo PDF
             st.download_button(
                 label="Scarica PDF Report",
                 data=pdf_buffer,
-                file_name=f"report_{uploaded_file.name}.pdf",
+                file_name=pdf_filename,
                 mime="application/pdf"
             )
             
         except Exception as e:
             st.error(f"Errore nel processare il file {uploaded_file.name}: {e}")
+    
+    # Se sono stati generati PDF, offri il download combinato in un file ZIP
+    if all_pdf_reports:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+            for filename, pdf_buf in all_pdf_reports:
+                pdf_buf.seek(0)
+                zip_file.writestr(filename, pdf_buf.read())
+        zip_buffer.seek(0)
+        st.download_button(
+            label="Scarica tutti i PDF (ZIP)",
+            data=zip_buffer,
+            file_name="reports.zip",
+            mime="application/zip"
+        )
 else:
     st.info("Attendi il caricamento dei file Excel per generare il report.")
